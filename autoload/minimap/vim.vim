@@ -448,7 +448,7 @@ function! s:update_highlight() abort
         call s:minimap_color_git(win_info)
     endif
     if g:minimap_highlight_search
-        call s:minimap_color_search(win_info, 2)
+        call s:minimap_color_search(2)
     endif
 endfunction
 
@@ -676,7 +676,7 @@ endfunction
 function! s:minimap_update_color_search(query) abort
     let win_info = s:get_window_info()
     if len(win_info) > 0
-        call s:minimap_color_search(win_info, a:query)
+        call s:minimap_color_search(a:query)
     endif
 endfunction
 
@@ -686,69 +686,36 @@ function! minimap#vim#MinimapColorSearchGetSpans(win_info, query) abort
 endfunction
 " Query argument is either the query string, or a number representing how far
 " back into the search history we need to grab (it varies by context)
-function! s:minimap_color_search_get_spans(win_info, query) abort
-    " Get the last search the user searched for
-    if type(a:query) != type(0)
-        let last_search = a:query
-    else
-        let tmp = split(execute('his /'), '\n')
-        let tmp = split(tmp[len(tmp)-a:query], '', 1)
-        " echom 'tmp: ' . join(tmp)
-        let last_search = join(tmp[2:-1])
-    endif
-    " echom 'last_search: ' . last_search
+" function! s:minimap_color_search_get_spans(win_info, query) abort
+" endfunction
 
-    " Save the current view so we can return to it after searching
-    let curwinview = winsaveview()
-    " Start at top, save all match positions until we hit the bottom
-    call cursor(1, 1)
-    " The 'c' in this string lets the search match at the current cursor
-    " position. We need this for the first search to catch the very first
-    " character in the file, but we need to exclude it from all future
-    " searches, since the cursor will be moved to the start of each match.
-    let search_options_string = 'czW'
-    " Loop and get locations of all matches
-    let locations = []
-    let done = 0
-    while done == 0
-        let start_location = searchpos(last_search, search_options_string)
-        if start_location != [0, 0]
-            call searchpos(last_search, 'cezW')
-            let end_cursor = getpos('.')
-            let end_location = [end_cursor[1], end_cursor[2]]
-            if start_location[0] != end_location[0]
-                " Not equipped to handle matches that span more than one line
-                " yet, just skip it for now.
-                continue
-            endif
-            if end_location[1] < start_location[1]
-                " Error - end not farther than start. Skip.
-                continue
-            endif
-            let match_len = end_location[1] - start_location[1]
-            let this_location = {}
-            let this_location['line'] = start_location[0]
-            let this_location['col'] = start_location[1]
-            let this_location['match_len'] = match_len
-            call add(locations, this_location)
-            let this_location = {}
-            let search_options_string = 'zW'
+function! s:minimap_async_highlight_search(job_id, data, event) dict abort
+    echom 'in async, event: ' . a:event
+    if a:event !=? 'stdout'
+        if a:event ==? 'stderr'
+            echom 'stderr. Data: ' . join(a:data, ';;')
         else
-            let done = 1
+            echom 'exit. Data: ' . a:data
         endif
-    endwhile
-    " Restore window view
-    call winrestview(curwinview)
+        return
+    endif
+    echom 'stdout. Data: ' . join(a:data, ';;')
+    let win_info = s:get_window_info()
+    if len(win_info) == 0
+        return
+    endif
 
-    " Convert all positions to mm
+    " Parse data
     let mm_spans = []
-    for this_location in locations
-        let mm_line = s:buffer_to_map(this_location['line'] - 1, a:win_info['height'], a:win_info['mm_height'])
+    let matches = split(a:data[0], ',')
+    for match in matches
+        let [match_line, match_col, match_len] = split(match, ':')
+        let mm_line = s:buffer_to_map(match_line - 1, win_info['height'], win_info['mm_height'])
         " Braille takes 3 bytes when using UTF-8. Column position is specified
         " in number of bytes offset, so to calculate horizontal position to
         " pass to the highlighting function, we need to multiply by 3
-        let mm_col = 3 * (s:buffer_to_map(this_location['col'] - 1,       a:win_info['max_width'], a:win_info['mm_max_width']))
-        let mm_len = 3 * (s:buffer_to_map(this_location['match_len'] - 1, a:win_info['max_width'], a:win_info['mm_max_width']))
+        let mm_col = 3 * (s:buffer_to_map(match_col - 1, win_info['max_width'], win_info['mm_max_width']))
+        let mm_len = 3 * (s:buffer_to_map(match_len - 1, win_info['max_width'], win_info['mm_max_width']))
         " If we don't land directly on an integer value of ([byte length]x + 1),
         " the highlight will not show up. Make sure the values land in those
         " bins. Above scaling gives 3 as a minimum. We take off any
@@ -760,27 +727,44 @@ function! s:minimap_color_search_get_spans(win_info, query) abort
         call add(mm_spans, [mm_line, mm_col, mm_len])
     endfor
 
-    return mm_spans
-endfunction
-
-function! s:minimap_color_search(win_info, query) abort
-    if eval('v:hlsearch') == 0 || eval('&hlsearch') == 0
-        " Don't bother doing anything if any search highlighting is turned off
-        return
-    endif
-
-    let mm_spans = s:minimap_color_search_get_spans(a:win_info, a:query)
-
     " Clear old colors before writing new ones
-    call s:clear_id_list_colors(a:win_info['winid'], g:minimap_search_id_list)
+    call s:clear_id_list_colors(win_info['winid'], g:minimap_search_id_list)
     let g:minimap_search_id_list = []
     " Color lines, creating a new id for each group
     for a_span in mm_spans
         " span_list item: [line_number, column_number, length]
         call add(g:minimap_search_id_list, s:get_next_search_matchid())
         call s:set_span_color(g:minimap_search_color, [a_span],
-            \ g:minimap_search_color_priority, g:minimap_search_id_list[-1], a:win_info['winid'])
+            \ g:minimap_search_color_priority, g:minimap_search_id_list[-1], win_info['winid'])
     endfor
+endfunction
+
+function! s:minimap_color_search(query) abort
+    if eval('v:hlsearch') == 0 || eval('&hlsearch') == 0
+        " Don't bother doing anything if any search highlighting is turned off
+        return
+    endif
+
+    " Get the last search the user searched for
+    if type(a:query) != type(0)
+        let search = a:query
+    else
+        let tmp = split(execute('his /'), '\n')
+        let tmp = split(tmp[len(tmp)-a:query], '', 1)
+        " echom 'tmp: ' . join(tmp)
+        let search = join(tmp[2:-1])
+    endif
+    " echom 'search: ' . search
+
+    " Launch an async task and continue with this when it finishes
+    let s:job_options = { 'stdout_buffered': 1,
+                \ 'on_stdout': function('s:minimap_async_highlight_search'),
+                \ 'on_stderr': function('s:minimap_async_highlight_search'),
+                \ 'on_exit':   function('s:minimap_async_highlight_search')
+                \ }
+    let cmd_list = ['bin/async_search.sh', search, expand('%')]
+    echom 'cmd_list: ' . join(cmd_list)
+    let s:searcher = jobstart(cmd_list, s:job_options)
 endfunction
 
 function! s:get_next_search_matchid() abort
