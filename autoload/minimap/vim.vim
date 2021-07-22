@@ -458,6 +458,9 @@ function! s:update_highlight() abort
     if g:minimap_highlight_search
         call s:minimap_color_search(win_info, 2)
     endif
+    if g:minimap_highlight_marks
+        call s:minimap_color_marks(win_info)
+    endif
 endfunction
 
 " Translates a position in a buffer to its respective position in the map.
@@ -579,6 +582,28 @@ endfunction
 function! s:source_buffer_enter_handler() abort
     call s:refresh_minimap(0)
     call s:update_highlight()
+endfunction
+
+function! s:convert_to_mm_spans(win_info, locations) abort
+    let mm_spans = []
+    for this_location in a:locations
+        let mm_line = s:buffer_to_map(this_location['line'] - 1, a:win_info['height'], a:win_info['mm_height'])
+        " Braille takes 3 bytes when using UTF-8. Column position is specified
+        " in number of bytes offset, so to calculate horizontal position to
+        " pass to the highlighting function, we need to multiply by 3
+        let mm_col = 3 * (s:buffer_to_map(this_location['col'] - 1,       a:win_info['max_width'], a:win_info['mm_max_width']))
+        let mm_len = 3 * (s:buffer_to_map(this_location['match_len'] - 1, a:win_info['max_width'], a:win_info['mm_max_width']))
+        " If we don't land directly on an integer value of ([byte length]x + 1),
+        " the highlight will not show up. Make sure the values land in those
+        " bins. Above scaling gives 3 as a minimum. We take off any
+        " remainder, then bump it down to the leftmost column (which is
+        " offset by 1, hence the -2)
+        let mm_col = (mm_col - (mm_col % 3)) - 2
+        " echom 'buf: ' . join([this_location['line'], this_location['col'], this_location['match_len']])
+        " echom 'mm : ' . join([mm_line, mm_col, mm_len])
+        call add(mm_spans, [mm_line, mm_col, mm_len])
+    endfor
+    return mm_spans
 endfunction
 
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -751,26 +776,7 @@ function! s:minimap_color_search_get_spans(win_info, query) abort
     call winrestview(curwinview)
 
     " Convert all positions to mm
-    let mm_spans = []
-    for this_location in locations
-        let mm_line = s:buffer_to_map(this_location['line'] - 1, a:win_info['height'], a:win_info['mm_height'])
-        " Braille takes 3 bytes when using UTF-8. Column position is specified
-        " in number of bytes offset, so to calculate horizontal position to
-        " pass to the highlighting function, we need to multiply by 3
-        let mm_col = 3 * (s:buffer_to_map(this_location['col'] - 1,       a:win_info['max_width'], a:win_info['mm_max_width']))
-        let mm_len = 3 * (s:buffer_to_map(this_location['match_len'] - 1, a:win_info['max_width'], a:win_info['mm_max_width']))
-        " If we don't land directly on an integer value of ([byte length]x + 1),
-        " the highlight will not show up. Make sure the values land in those
-        " bins. Above scaling gives 3 as a minimum. We take off any
-        " remainder, then bump it down to the leftmost column (which is
-        " offset by 1, hence the -2)
-        let mm_col = (mm_col - (mm_col % 3)) - 2
-        " echom 'buf: ' . join([this_location['line'], this_location['col'], this_location['match_len']])
-        " echom 'mm : ' . join([mm_line, mm_col, mm_len])
-        call add(mm_spans, [mm_line, mm_col, mm_len])
-    endfor
-
-    return mm_spans
+    return s:convert_to_mm_spans(a:win_info, locations)
 endfunction
 
 function! s:minimap_color_search(win_info, query) abort
@@ -796,3 +802,58 @@ endfunction
 function! s:get_next_search_matchid() abort
     return g:minimap_search_matchid_safe_range + len(g:minimap_search_id_list)
 endfunction
+
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+" Mark Highlight Stuff
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+" Hook function for unit tests
+function! minimap#vim#MinimapColorMarksGetSpans(win_info) abort
+    return s:minimap_color_marks_get_spans(a:win_info)
+endfunction
+function! s:minimap_color_marks_get_spans(win_info) abort
+    " TODO - Figure out how to parse global marks A-Z. How do we know if it's
+    " in this file?
+    " TODO - Replace with mark letter? Map to a 3 byte letter?
+
+    " Get mark info
+    let mark_call = 'silent! marks abcdefghijklmnopqrstuvwxyz<CR>'
+    let marks_list = substitute(execute(mark_call), '\n\+&', '', '')
+
+    " Parse the mark report into spans
+    let lines = split(marks_list, '\n')
+    let locations = []
+    if substitute(lines[0], ' \+', ' ', 'g') ==? 'mark line col file/text'
+        let lines = lines[1:]
+        for line in lines
+            let line = substitute(line, ' \+', ' ', 'g')
+            let fields = split(line, ' ')
+            if line !=? 'mark line col file/text' && len(fields) > 2
+                let line = fields[1]
+                let col  = fields[2]
+                call add(locations, {'line': line, 'col': col, 'match_len': 1})
+            endif
+        endfor
+    endif
+
+    " Convert to minimap spans
+    return s:convert_to_mm_spans(a:win_info, locations)
+endfunction
+function! s:minimap_color_marks(win_info) abort
+    let mm_spans = s:minimap_color_marks_get_spans(a:win_info)
+
+    " Clear old colors before writing new ones
+    call s:clear_id_list_colors(a:win_info['winid'], g:minimap_marks_id_list)
+    let g:minimap_marks_id_list = []
+    " Color lines, creating a new id for each group
+    for a_span in mm_spans
+        " span_list item: [line_number, column_number, length]
+        call add(g:minimap_marks_id_list, s:get_next_marks_matchid())
+        call s:set_span_color(g:minimap_marks_color, [a_span],
+            \ g:minimap_marks_color_priority, g:minimap_marks_id_list[-1], a:win_info['winid'])
+    endfor
+endfunction
+
+function! s:get_next_marks_matchid() abort
+    return g:minimap_marks_matchid_safe_range + len(g:minimap_marks_id_list)
+endfunction
+

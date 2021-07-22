@@ -54,6 +54,10 @@ if !exists('g:minimap_search_matchid_safe_range')
     let g:minimap_search_matchid_safe_range = g:minimap_base_matchid + 30000
 endif
 
+if !exists('g:minimap_marks_matchid_safe_range')
+    let g:minimap_marks_matchid_safe_range = g:minimap_base_matchid + 40000
+endif
+
 if !exists('g:minimap_highlight')
     let g:minimap_highlight = 'Title'
 endif
@@ -94,6 +98,10 @@ if !exists('g:minimap_highlight_search')
     let g:minimap_highlight_search = 0
 endif
 
+if !exists('g:minimap_highlight_marks')
+    let g:minimap_highlight_marks = 0
+endif
+
 if !exists('g:minimap_diffadd_color')
     let g:minimap_diffadd_color = 'DiffAdd'
 endif
@@ -110,6 +118,10 @@ if !exists('g:minimap_search_color')
     let g:minimap_search_color = 'Search'
 endif
 
+if !exists('g:minimap_marks_color')
+    let g:minimap_search_color = 'WarningMsg'
+endif
+
 if !exists('g:minimap_cursor_color_priority')
     let g:minimap_cursor_color_priority = 110
 endif
@@ -117,7 +129,10 @@ if !exists('g:minimap_git_color_priority')
     let g:minimap_git_color_priority = 100
 endif
 if !exists('g:minimap_search_color_priority')
-    let g:minimap_search_color_priority = 120
+    let g:minimap_search_color_priority = 130
+endif
+if !exists('g:minimap_marks_color_priority')
+    let g:minimap_marks_color_priority = 120
 endif
 
 " Declare mutexes
@@ -127,6 +142,7 @@ let g:minimap_opening = 0
 let g:minimap_range_id_list = []
 let g:minimap_git_id_list = []
 let g:minimap_search_id_list = []
+let g:minimap_marks_id_list = []
 " Declare unit test specific items
 let g:minimap_run_update_highlight_count = 0
 
