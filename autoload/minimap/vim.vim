@@ -699,6 +699,9 @@ function! s:clear_highlights() abort
 endfunction
 
 function! s:minimap_move() abort
+    if s:win_info == {}
+        return
+    end
     let curr = line('.')
 
     execute 'wincmd p'
