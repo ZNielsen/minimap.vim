@@ -10,6 +10,17 @@ let s:last_pos = {}
 let s:last_range = {}
 let s:win_info = {}
 let s:len_cache = {}
+let s:float_leave = 0
+let s:pre_float_window = 0
+
+function! s:reset_state() abort
+    let s:last_pos = {}
+    let s:last_range = {}
+    let s:win_info = {}
+    let s:len_cache = {}
+    let s:float_leave = 0
+    let s:pre_float_window = 0
+endfunction
 
 function! minimap#vim#MinimapToggle() abort
     call s:toggle_window()
@@ -61,15 +72,19 @@ function! s:win_enter_handler() abort
     else
         call s:source_win_enter()
     endif
+    let s:float_leave = 0
 endfunction
 
 function! s:tab_leave_handler() abort
     " Nuke our state - we don't keep a per-tab cache so we need to rebuild on
     " any tab change
-    let s:last_pos = {}
-    let s:last_range = {}
-    let s:win_info = {}
-    let s:len_cache = {}
+    call s:reset_state()
+endfunction
+function! s:buffer_leave_handler() abort
+    echom 'in buffer leave handler, bufname(): [' .. bufname() .. ']'
+    if bufname() == ''
+        let s:float_leave = 1
+    endif
 endfunction
 
 function! s:get_longest_line_cmd() abort
@@ -214,6 +229,8 @@ function! s:open_window() abort
         endif
         autocmd VimEnter,DiffUpdated *                          call s:handle_autocmd(7)
         autocmd TabLeave *                                      call s:handle_autocmd(8)
+        autocmd BufLeave *                                      call s:handle_autocmd(9)
+        autocmd WinNew * echom 'In a new window'
     augroup END
 
     " https://github.com/neovim/neovim/issues/6211
@@ -279,6 +296,8 @@ function! s:handle_autocmd(cmd) abort
         elseif a:cmd == 8           " TabLeave *
             echom 'TabLeave *'
             call s:tab_leave_handler()
+        elseif a:cmd == 9           " BufLeave *
+            call s:buffer_leave_handler()
         endif
     endif
 endfunction
@@ -844,12 +863,22 @@ function! s:minimap_move() abort
 endfunction
 
 function! s:minimap_win_enter() abort
-    " do nothing
+    " If we just left a floating window, go to the source not the minimap
+    if s:float_leave
+        echom 'Detected leaveing floating window, going to window id [' .. s:pre_float_window .. ']'
+        call win_gotoid(s:pre_float_window)
+    endif
 endfunction
 
 function! s:source_win_enter() abort
     call s:get_window_info()
     call s:update_highlight()
+
+    echom 'in source win enter, bufname(): [' .. bufname() .. ']'
+    if bufname() == ''
+        let s:pre_float_window = win_getid()
+        echom 'Setting pre_float_window to [' .. s:pre_float_window .. ']'
+    endif
 endfunction
 
 function! s:minimap_buffer_enter_handler() abort
